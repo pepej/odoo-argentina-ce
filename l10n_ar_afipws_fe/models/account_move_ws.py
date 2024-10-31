@@ -251,7 +251,7 @@ class AccountMove(models.Model):
                 self.company_id.vat,
                 invoice_info["CbteAsoc"].invoice_date.strftime("%Y%m%d"),
             )
-        for line in invoice_info["line"]:
+        for line in invoice_info["lines"]:
             ws.AgregarItem(
                 line["codigo"],
                 line["sec"],
@@ -278,7 +278,7 @@ class AccountMove(models.Model):
                 self.company_id.vat,
             )
 
-        for line in invoice_info["line"]:
+        for line in invoice_info["lines"]:
             ws.AgregarItem(
                 line["codigo"],
                 line["ds"],
@@ -521,6 +521,7 @@ class AccountMove(models.Model):
             # por lo que verificamos, se pide permiso existente solo
             # si es tipo expo 1 y es factura (codigo 19), para todo el
             # resto pasamos cadena vacia
+        if True:
             if (
                 int(invoice_info["doc_afip_code"]) == 19
                 and invoice_info["tipo_expo"] == 1
@@ -556,21 +557,24 @@ class AccountMove(models.Model):
             # TODO tal vez podemos unificar este criterio con el del
             # citi que pide el cuit al partner
             # customer data (foreign trade):
-            invoice_info["nombre_cliente"] = self.commercial_partner.name
+            invoice_info["nombre_cliente"] = self.commercial_partner_id.name
             # se debe informar cuit pais o id_impositivo
             if invoice_info["nro_doc"]:
                 invoice_info["id_impositivo"] = invoice_info["nro_doc"]
                 invoice_info["cuit_pais_cliente"] = None
-            elif invoice_info["country"].code != "AR" and invoice_info["nro_doc"]:
+            if invoice_info["country"].code != "AR" and invoice_info["nro_doc"]:
                 invoice_info["id_impositivo"] = None
-                if self.commercial_partner.is_company:
-                    invoice_info["cuit_pais_cliente"] = invoice_info[
-                        "country"
-                    ].cuit_juridica
+                if  invoice_info["commercial_partner"].vat:
+                    invoice_info["cuit_pais_cliente"] = invoice_info["commercial_partner"].vat
                 else:
-                    invoice_info["cuit_pais_cliente"] = invoice_info[
-                        "country"
-                    ].cuit_fisica
+                    if self.commercial_partner_id.is_company:
+                        invoice_info["cuit_pais_cliente"] = invoice_info[
+                            "country"
+                        ].l10n_ar_legal_entity_vat
+                    else:
+                        invoice_info["cuit_pais_cliente"] = invoice_info[
+                            "country"
+                        ].l10n_ar_natural_vat
                 if not invoice_info["cuit_pais_cliente"]:
                     raise UserError(
                         _(
@@ -581,17 +585,16 @@ class AccountMove(models.Model):
 
                 invoice_info["domicilio_cliente"] = " - ".join(
                     [
-                        self.commercial_partner.name or "",
-                        self.commercial_partner.street or "",
-                        self.commercial_partner.street2 or "",
-                        self.commercial_partner.zip or "",
-                        self.commercial_partner.city or "",
+                        self.commercial_partner_id.name or "",
+                        self.commercial_partner_id.street or "",
+                        self.commercial_partner_id.street2 or "",
+                        self.commercial_partner_id.zip or "",
+                        self.commercial_partner_id.city or "",
                     ]
                 )
-                invoice_info[
-                    "pais_dst_cmp"
-                ] = self.commercial_partner.country_id.l10n_ar_afip_code
-        invoice_info["lines"] = self.invoice_map_info_lines()
+                invoice_info["pais_dst_cmp"] = self.commercial_partner_id.country_id.l10n_ar_afip_code
+        invoice_info["fecha_cbte"] = invoice_info["fecha_cbte"].strftime("%Y%m%d")
+        invoice_info["lines"] = self.invoice_map_info_lines_fex()
 
         return invoice_info
 
@@ -613,7 +616,52 @@ class AccountMove(models.Model):
         invoice_info["obs_generales"] = self.comment
         invoice_info["lines"] = self.invoice_map_info_lines()
         return invoice_info
+         
+    def invoice_map_info_lines_fex(self):
+        lines = []
+        for line in self.invoice_line_ids.filtered(lambda x: not x.display_type):
+            line_temp = {}
+            line_temp["codigo"] = line.product_id.default_code
+            # unidad de referencia del producto si se comercializa
+            # en una unidad distinta a la de consumo
+            # uom is not mandatory, if no UOM we use "unit"
+            if not line.product_uom_id:
+                line_temp["umed"] = "7"
+            elif not line.product_uom_id.l10n_ar_afip_code:
+                raise UserError(
+                    _("Not afip code con producto UOM %s" % (line.product_uom_id.name))
+                )
+            else:
+                line_temp["umed"] = line.product_uom_id.l10n_ar_afip_code
+            # cod_mtx = line.uom_id.l10n_ar_afip_code
+            line_temp["ds"] = line.name
+            line_temp["qty"] = line.quantity
+            line_temp["precio"] = line.price_unit
+            line_temp["importe"] = line.price_subtotal
+            # calculamos bonificacion haciendo teorico menos importe
+            line_temp["bonif"] = (
+                line.discount
+                and str(
+                    "%.2f"
+                    % (line_temp["precio"] * line_temp["qty"] - line_temp["importe"])
+                )
+                or None
+            )
+            line_temp["iva_id"] = line.group_tax_id.tax_group_id.l10n_ar_vat_afip_code
+            vat_taxes_amounts = line.group_tax_id.compute_all(
+                line.price_unit,
+                self.currency_id,
+                line.quantity,
+                product=line.product_id,
+                partner=self.partner_id,
+            )
+            #line_temp["iva_id"] = line.group_tax_id.tax_group_id.l10n_ar_vat_afip_code
+            line_temp["imp_iva"] = sum(
+                [x["amount"] for x in vat_taxes_amounts["taxes"]]
+            )
+            lines.append(line_temp)
 
+            return lines
     def invoice_map_info_lines(self):
         lines = []
         for line in self.invoice_line_ids.filtered(lambda x: not x.display_type):

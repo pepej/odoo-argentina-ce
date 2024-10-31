@@ -273,10 +273,16 @@ class AccountMove(models.Model):
             # TODO ver que algunso campos no tienen sentido porque solo se
             # escribe aca si no hay errores
             if hasattr(ws, "Vencimiento"):
-                vto = datetime.strptime(ws.Vencimiento, "%Y%m%d").date()
+                try:
+                    vto = datetime.strptime(ws.Vencimiento, "%Y%m%d").date()
+                except:
+                    vto = datetime.strptime(ws.Vencimiento, "%d/%m/%Y").date()
             if hasattr(ws, "FchVencCAE"):
-                vto = datetime.strptime(ws.FchVencCAE, "%Y%m%d").date()
-
+                try:
+                    vto = datetime.strptime(ws.FchVencCAE, "%Y%m%d").date()
+                except:
+                    vto = datetime.strptime(ws.FchVencCAE, "%d/%m/%Y").date()
+                    
             _logger.info(
                 "CAE solicitado con exito. CAE: %s. Resultado %s"
                 % (ws.CAE, ws.Resultado)
