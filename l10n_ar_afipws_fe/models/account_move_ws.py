@@ -661,7 +661,7 @@ class AccountMove(models.Model):
             )
             lines.append(line_temp)
 
-            return lines
+        return lines
     def invoice_map_info_lines(self):
         lines = []
         for line in self.invoice_line_ids.filtered(lambda x: not x.display_type):
